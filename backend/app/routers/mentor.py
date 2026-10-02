@@ -5,13 +5,15 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.auth import get_current_mentor
+from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models import Kudos
 from backend.app.schemas import KudosResponse, KudosStatusUpdate
-from backend.app.slack import post_kudos_to_slack
+from backend.app.slack import post_kudos_to_slack, update_slack_mentor_message
+from backend.app.auth import get_current_mentor
 
 router = APIRouter(prefix="/api/mentor", tags=["mentor"])
+
 
 
 class MentorKudosListResponse(BaseModel):
@@ -120,8 +122,13 @@ async def release_kudos_to_slack(
     # Mark as sent
     kudos.slack_status = "sent"
     kudos.slack_sent_at = datetime.now(timezone.utc)
+    kudos.reviewed_by = current_mentor.get("name") or current_mentor.get("email") or "a mentor"
     await db.commit()
     await db.refresh(kudos)
+
+    # Update interactive Slack message
+    current_time_str = datetime.now(timezone.utc).strftime("%b %d, %Y at %I:%M %p UTC")
+    await update_slack_mentor_message(kudos, f"✅ *Approved & Released to #{settings.slack_channel_id or 'kudos'}* by @{kudos.reviewed_by} on {current_time_str}")
 
     return KudosResponse(
         id=kudos.id,
@@ -131,6 +138,7 @@ async def release_kudos_to_slack(
         sender_name=kudos.sender_name,
         slack_status=kudos.slack_status,
         slack_sent_at=kudos.slack_sent_at,
+        reviewed_by=kudos.reviewed_by,
         created_at=kudos.created_at,
     )
 
@@ -147,6 +155,11 @@ async def delete_kudos(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Kudos not found"
         )
+
+    # Update interactive Slack message
+    reviewer = current_mentor.get("name") or current_mentor.get("email") or "a mentor"
+    current_time_str = datetime.now(timezone.utc).strftime("%b %d, %Y at %I:%M %p UTC")
+    await update_slack_mentor_message(kudos, f"🗑️ *Deleted* by @{reviewer} on {current_time_str}")
 
     await db.delete(kudos)
     await db.commit()
@@ -169,9 +182,23 @@ async def update_kudos_status_by_mentor(
     kudos.slack_status = status_update.slack_status
     if status_update.slack_sent_at is not None:
         kudos.slack_sent_at = status_update.slack_sent_at
+    kudos.reviewed_by = current_mentor.get("name") or current_mentor.get("email") or "a mentor"
 
     await db.commit()
     await db.refresh(kudos)
+
+    # Update interactive Slack message
+    reviewer = kudos.reviewed_by
+    current_time_str = datetime.now(timezone.utc).strftime("%b %d, %Y at %I:%M %p UTC")
+    
+    if kudos.slack_status == "sent":
+        status_note = f"✅ *Manually marked as Sent* by @{reviewer} on {current_time_str}"
+    elif kudos.slack_status == "rejected":
+        status_note = f"❌ *Rejected* by @{reviewer} on {current_time_str}"
+    else:
+        status_note = f"ℹ️ *Status updated to {kudos.slack_status}* by @{reviewer} on {current_time_str}"
+        
+    await update_slack_mentor_message(kudos, status_note)
 
     return KudosResponse(
         id=kudos.id,
@@ -181,5 +208,6 @@ async def update_kudos_status_by_mentor(
         sender_name=kudos.sender_name,
         slack_status=kudos.slack_status,
         slack_sent_at=kudos.slack_sent_at,
+        reviewed_by=kudos.reviewed_by,
         created_at=kudos.created_at,
     )

@@ -29,6 +29,7 @@ def build_kudos_response(kudos: Kudos) -> KudosResponse:
         sender_name=kudos.sender_name,
         slack_status=kudos.slack_status,
         slack_sent_at=kudos.slack_sent_at,
+        reviewed_by=kudos.reviewed_by,
         created_at=kudos.created_at,
     )
 
@@ -89,7 +90,12 @@ async def create_kudos(
     # Automatically notify private mentor Slack channel if configured
     if settings.slack_mentor_channel_id and settings.slack_bot_token:
         try:
-            await post_kudos_review_to_mentor_channel(kudos)
+            success, err, channel, ts = await post_kudos_review_to_mentor_channel(kudos)
+            if success and channel and ts:
+                kudos.slack_message_channel = channel
+                kudos.slack_message_ts = ts
+                await db.commit()
+                await db.refresh(kudos)
         except Exception:
             pass
 

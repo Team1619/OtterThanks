@@ -98,7 +98,11 @@ async def handle_slack_interactions(
     # Handle Approve
     if action_id == "approve_kudos":
         if kudos.slack_status == "sent":
-            status_note = f"ℹ️ Already released by @{user_name}"
+            reviewer = kudos.reviewed_by or "someone else"
+            status_note = f"ℹ️ Already released by @{reviewer}"
+        elif kudos.slack_status == "rejected":
+            reviewer = kudos.reviewed_by or "someone else"
+            status_note = f"⚠️ Already rejected by @{reviewer}"
         else:
             # Post to public channel
             success, error = await post_kudos_to_slack(kudos)
@@ -112,6 +116,7 @@ async def handle_slack_interactions(
 
             kudos.slack_status = "sent"
             kudos.slack_sent_at = datetime.now(timezone.utc)
+            kudos.reviewed_by = user_name
             await db.commit()
             status_note = f"✅ *Approved & Released to #{settings.slack_channel_id or 'kudos'}* by @{user_name} on {current_time_str}"
 
@@ -153,14 +158,23 @@ async def handle_slack_interactions(
         return {
             "response_type": "in_channel",
             "replace_original": True,
-            "text": f"✅ Kudos #{kudos_id} approved by @{user_name}",
+            "text": f"✅ Kudos #{kudos_id} approved by @{kudos.reviewed_by or user_name}",
             "blocks": updated_blocks,
         }
 
     # Handle Reject
     elif action_id == "reject_kudos":
-        kudos.slack_status = "rejected"
-        await db.commit()
+        if kudos.slack_status == "sent":
+            reviewer = kudos.reviewed_by or "someone else"
+            status_note = f"ℹ️ Already released by @{reviewer}"
+        elif kudos.slack_status == "rejected":
+            reviewer = kudos.reviewed_by or "someone else"
+            status_note = f"ℹ️ Already rejected by @{reviewer}"
+        else:
+            kudos.slack_status = "rejected"
+            kudos.reviewed_by = user_name
+            await db.commit()
+            status_note = f"❌ *Rejected / Dismissed* by @{user_name} on {current_time_str}"
 
         updated_blocks = [
             {
@@ -190,7 +204,7 @@ async def handle_slack_interactions(
                 "elements": [
                     {
                         "type": "mrkdwn",
-                        "text": f"❌ *Rejected / Dismissed* by @{user_name} on {current_time_str}",
+                        "text": status_note,
                     }
                 ],
             },
@@ -200,7 +214,7 @@ async def handle_slack_interactions(
         return {
             "response_type": "in_channel",
             "replace_original": True,
-            "text": f"❌ Kudos #{kudos_id} rejected by @{user_name}",
+            "text": f"❌ Kudos #{kudos_id} rejected by @{kudos.reviewed_by or user_name}",
             "blocks": updated_blocks,
         }
 

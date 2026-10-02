@@ -21,6 +21,11 @@ class Kudos(Base):
     slack_sent_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    slack_message_ts: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    slack_message_channel: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True
+    )
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -104,16 +104,17 @@ async def post_kudos_to_slack(kudos: Kudos) -> Tuple[bool, Optional[str]]:
         return False, str(e)
 
 
-async def post_kudos_review_to_mentor_channel(kudos: Kudos) -> Tuple[bool, Optional[str]]:
+async def post_kudos_review_to_mentor_channel(kudos: Kudos) -> Tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """
     Posts an interactive Kudos review card to the private mentor Slack channel with
     approve (check) and reject (x) buttons.
+    Returns (success, error, channel_id, message_ts).
     """
     if not settings.slack_bot_token:
-        return False, "SLACK_BOT_TOKEN is not configured in .env."
+        return False, "SLACK_BOT_TOKEN is not configured in .env.", None, None
 
     if not settings.slack_mentor_channel_id:
-        return False, "SLACK_MENTOR_CHANNEL_ID is not configured in .env."
+        return False, "SLACK_MENTOR_CHANNEL_ID is not configured in .env.", None, None
 
     recipient_display, fallback_recipient = format_recipient_display(kudos)
     quoted_message = "\n> ".join(kudos.message.strip().splitlines())
@@ -206,18 +207,99 @@ async def post_kudos_review_to_mentor_channel(kudos: Kudos) -> Tuple[bool, Optio
                 logger.info(
                     f"Successfully posted kudos #{kudos.id} to private mentor channel {settings.slack_mentor_channel_id}."
                 )
-                return True, None
+                return True, None, data.get("channel"), data.get("ts")
 
             error = data.get("error", f"HTTP {resp.status_code}")
             logger.error(
                 f"Slack API error posting review card for kudos #{kudos.id}: {error}"
             )
-            return False, error
+            return False, error, None, None
     except Exception as e:
         logger.error(
             f"Network error posting review card for kudos #{kudos.id}: {str(e)}"
         )
-        return False, str(e)
+        return False, str(e), None, None
+
+
+async def update_slack_mentor_message(kudos: Kudos, action_description: str) -> bool:
+    """
+    Updates the existing mentor review message in Slack to remove the buttons
+    and show the current status and who performed the action.
+    """
+    if not settings.slack_bot_token or not kudos.slack_message_channel or not kudos.slack_message_ts:
+        return False
+
+    recipient_display, fallback_recipient = format_recipient_display(kudos)
+    quoted_message = "\n> ".join(kudos.message.strip().splitlines())
+
+    status_icon = "🦦"
+    if kudos.slack_status == "sent":
+        status_icon = "✅"
+    elif kudos.slack_status == "rejected":
+        status_icon = "❌"
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"{status_icon} Kudos Reviewed",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*To:* {recipient_display}\n*Signed by:* *{kudos.sender_name}*",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*Message:*\n> {quoted_message}",
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": action_description,
+                }
+            ],
+        },
+        {"type": "divider"},
+    ]
+
+    payload = {
+        "channel": kudos.slack_message_channel,
+        "ts": kudos.slack_message_ts,
+        "text": f"Kudos #{kudos.id} was updated: {action_description}",
+        "blocks": blocks,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {settings.slack_bot_token.strip()}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://slack.com/api/chat.update",
+                json=payload,
+                headers=headers,
+            )
+            data = resp.json()
+            if data.get("ok") is True:
+                return True
+            logger.error(f"Slack API error updating mentor message for kudos #{kudos.id}: {data.get('error')}")
+            return False
+    except Exception as e:
+        logger.error(f"Network error updating mentor message for kudos #{kudos.id}: {str(e)}")
+        return False
 
 
 def verify_slack_signature(

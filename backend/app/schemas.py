@@ -18,6 +18,7 @@ class KudosResponse(BaseModel):
     sender_name: str
     slack_status: str
     slack_sent_at: Optional[datetime] = None
+    reviewed_by: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
