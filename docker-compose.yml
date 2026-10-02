@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: otterthanks-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-otterthanks}
+      POSTGRES_USER: ${POSTGRES_USER:-otter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-otterpass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-otter} -d ${POSTGRES_DB:-otterthanks}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: otterthanks-web
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-otter}:${POSTGRES_PASSWORD:-otterpass}@db:5432/${POSTGRES_DB:-otterthanks}
+      - STATIC_DIST_DIR=/app/frontend/dist
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-}
+      - ALLOWED_GOOGLE_GROUP=${ALLOWED_GOOGLE_GROUP:-mentors@team1619.net}
+      - ALLOWED_MENTOR_EMAILS=${ALLOWED_MENTOR_EMAILS:-}
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:-otterthanks-secure-session-key-change-in-production}
+      - DEV_MODE=${DEV_MODE:-true}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_CHANNEL_ID=${SLACK_CHANNEL_ID:-}
+      - SLACK_MENTOR_CHANNEL_ID=${SLACK_MENTOR_CHANNEL_ID:-}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    name: otterthanks_postgres_data
